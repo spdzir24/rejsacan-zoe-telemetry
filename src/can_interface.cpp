@@ -5,26 +5,27 @@
 
 #include "can_interface.h"
 
-CANInterface::CANInterface() 
+CANInterface::CANInterface()
     : initialized_(false), error_count_(0), last_error_time_(0) {
 }
 
 bool CANInterface::begin() {
-    // TWAI-Konfiguration
+#if ENABLE_UDS_DIAGNOSTICS
+    const twai_mode_t twai_mode = TWAI_MODE_NORMAL;
+#else
+    const twai_mode_t twai_mode = TWAI_MODE_LISTEN_ONLY;
+#endif
+
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(
-        TWAI_TX_GPIO, 
-        TWAI_RX_GPIO, 
-        TWAI_MODE_LISTEN_ONLY  // Nur empfangen (sicher!)
+        TWAI_TX_GPIO,
+        TWAI_RX_GPIO,
+        twai_mode
     );
     g_config.rx_queue_len = CAN_RX_QUEUE_SIZE;
 
-    // Timing-Konfiguration für 500 kbit/s
     twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
-
-    // Filter-Konfiguration (alle Frames akzeptieren)
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
-    // TWAI-Treiber installieren
     esp_err_t err = twai_driver_install(&g_config, &t_config, &f_config);
     if (err != ESP_OK) {
         DEBUG_PRINT("ERROR: twai_driver_install failed: ");
@@ -32,7 +33,6 @@ bool CANInterface::begin() {
         return false;
     }
 
-    // TWAI starten
     err = twai_start();
     if (err != ESP_OK) {
         DEBUG_PRINT("ERROR: twai_start failed: ");
@@ -42,7 +42,12 @@ bool CANInterface::begin() {
     }
 
     initialized_ = true;
-    DEBUG_PRINTLN("TWAI driver started in LISTEN_ONLY mode.");
+    DEBUG_PRINT("TWAI driver started in ");
+#if ENABLE_UDS_DIAGNOSTICS
+    DEBUG_PRINTLN("NORMAL mode.");
+#else
+    DEBUG_PRINTLN("LISTEN_ONLY mode.");
+#endif
     return true;
 }
 
@@ -57,10 +62,8 @@ bool CANInterface::receive(twai_message_t& frame, uint32_t timeout_ms) {
     if (err == ESP_OK) {
         return true;
     } else if (err == ESP_ERR_TIMEOUT) {
-        // Timeout ist normal, kein Fehler
         return false;
     } else {
-        // Echter Fehler
         DEBUG_VERBOSE_PRINT("WARNING: twai_receive error: ");
         DEBUG_VERBOSE_PRINTLN(esp_err_to_name(err));
         error_count_++;
@@ -95,12 +98,11 @@ bool CANInterface::isBusHealthy() {
 
     twai_status_info_t status;
     esp_err_t err = twai_get_status_info(&status);
-    
+
     if (err != ESP_OK) {
         return false;
     }
 
-    // Bus-Off-Zustand prüfen
     if (status.state == TWAI_STATE_BUS_OFF) {
         DEBUG_PRINTLN("WARNING: TWAI bus is in BUS_OFF state!");
         return false;
@@ -116,7 +118,6 @@ bool CANInterface::recoverBus() {
 
     DEBUG_PRINTLN("Attempting TWAI bus recovery...");
 
-    // Bus stoppen
     esp_err_t err = twai_stop();
     if (err != ESP_OK) {
         DEBUG_PRINT("ERROR: twai_stop failed: ");
@@ -124,9 +125,8 @@ bool CANInterface::recoverBus() {
         return false;
     }
 
-    delay(100);  // Kurze Pause
+    delay(100);
 
-    // Bus neu starten
     err = twai_start();
     if (err != ESP_OK) {
         DEBUG_PRINT("ERROR: twai_start failed: ");
